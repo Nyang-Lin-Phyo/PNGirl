@@ -33,10 +33,31 @@ face_options = FaceLandmarkerOptions(
 SETTINGS_FILE = "camera_settings.json"
 RELEVANT_LANDMARKS = {0, 7, 8, 11, 12}
 SMOOTH = 0.4
+smoothed_anchor = None
+ANCHOR_SMOOTH = 0.4
 
 overlay_img = cv2.imread("assets/testCat.png", cv2.IMREAD_UNCHANGED)
 
 smoothed_angles = None
+
+# --- Canvas ---
+
+
+def create_work_canvas(img, scale=2.0):
+    h, w = img.shape[:2]
+
+    canvas_w = int(w * scale)
+    canvas_h = int(h * scale)
+
+    canvas = np.zeros((canvas_h, canvas_w, 4), dtype=np.uint8)
+
+    x = (canvas_w - w) // 2
+    y = (canvas_h - h) // 2
+
+    canvas[y : y + h, x : x + w] = img
+
+    return canvas
+
 
 # --- Settings ---
 
@@ -204,7 +225,9 @@ def get_head_anchor(landmarks, w, h, offset_mult, x_nudge, y_nudge, roll_deg):
 
 
 def rotate_png(img, roll, pitch, yaw):
+    img = create_work_canvas(img)
     h, w = img.shape[:2]
+
     cx, cy = w // 2, h // 2
 
     # Roll: 2D rotation
@@ -397,9 +420,22 @@ with PoseLandmarker.create_from_options(
                 roll,
             )
 
-            rotated = rotate_png(overlay_img, roll, pitch, yaw)
-            scaled = scale_png(rotated, ear_width, settings["head_scale_mult"])
-            composite(frame, scaled, ax, ay)
+            if smoothed_anchor is None:
+                smoothed_anchor = (ax, ay)
+            else:
+                sx, sy = smoothed_anchor
+
+                sx += ANCHOR_SMOOTH * (ax - sx)
+                sy += ANCHOR_SMOOTH * (ay - sy)
+
+                smoothed_anchor = (sx, sy)
+
+            ax = int(smoothed_anchor[0])
+            ay = int(smoothed_anchor[1])
+
+            scaled = scale_png(overlay_img, ear_width, settings["head_scale_mult"])
+            rotated = rotate_png(scaled, roll, pitch, yaw)
+            composite(frame, rotated, ax, ay)
 
             cv2.circle(frame, (ax, ay), 6, (0, 0, 255), -1)
             cv2.circle(frame, (ax, ay), 6, (255, 255, 255), 2)
@@ -421,9 +457,9 @@ with PoseLandmarker.create_from_options(
         elif key == ord("d"):
             settings["head_x_nudge"] += 5
         elif key == ord("i"):
-            settings["head_y_nudge"] += 5
-        elif key == ord("k"):
             settings["head_y_nudge"] -= 5
+        elif key == ord("k"):
+            settings["head_y_nudge"] += 5
         elif key == ord("z"):
             settings["head_scale_mult"] = round(settings["head_scale_mult"] + 0.1, 2)
         elif key == ord("x"):
