@@ -420,13 +420,24 @@ with PoseLandmarker.create_from_options(
                 roll,
             )
 
+            DEADZONE = 3
+
             if smoothed_anchor is None:
                 smoothed_anchor = (ax, ay)
             else:
                 sx, sy = smoothed_anchor
 
-                sx += ANCHOR_SMOOTH * (ax - sx)
-                sy += ANCHOR_SMOOTH * (ay - sy)
+                dx = ax - sx
+                dy = ay - sy
+
+                if abs(dx) < DEADZONE:
+                    dx = 0
+
+                if abs(dy) < DEADZONE:
+                    dy = 0
+
+                sx += ANCHOR_SMOOTH * dx
+                sy += ANCHOR_SMOOTH * dy
 
                 smoothed_anchor = (sx, sy)
 
