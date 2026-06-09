@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .env
 pose_landmarker.task
+pose_landmarker_full.task
