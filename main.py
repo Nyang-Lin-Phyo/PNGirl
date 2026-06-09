@@ -40,6 +40,7 @@ smoothed_angles = None
 
 # --- Settings ---
 
+
 def load_settings(cam_index):
     defaults = {
         "head_offset_mult": 0.9,
@@ -53,6 +54,7 @@ def load_settings(cam_index):
         data = json.load(f)
     return data.get(str(cam_index), defaults)
 
+
 def save_settings(cam_index, settings):
     data = {}
     if os.path.exists(SETTINGS_FILE):
@@ -63,7 +65,9 @@ def save_settings(cam_index, settings):
         json.dump(data, f, indent=2)
     print(f"Settings saved for camera {cam_index}")
 
+
 # --- Camera selection ---
+
 
 def choose_camera():
     print("Scanning cameras...")
@@ -84,35 +88,62 @@ def choose_camera():
     sel = 0
     while True:
         img = np.zeros((200, 400, 3), dtype=np.uint8)
-        cv2.putText(img, "SELECT CAMERA", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 255, 100), 1, cv2.LINE_AA)
-        cv2.putText(img, "W/S to select, ENTER to confirm", (10, 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1, cv2.LINE_AA)
+        cv2.putText(
+            img,
+            "SELECT CAMERA",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (100, 255, 100),
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            img,
+            "W/S to select, ENTER to confirm",
+            (10, 55),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (180, 180, 180),
+            1,
+            cv2.LINE_AA,
+        )
 
         for i, (idx, name) in enumerate(available):
-            has_settings = (os.path.exists(SETTINGS_FILE) and
-                            str(idx) in json.load(open(SETTINGS_FILE)))
+            has_settings = os.path.exists(SETTINGS_FILE) and str(idx) in json.load(
+                open(SETTINGS_FILE)
+            )
             tag = " [saved]" if has_settings else ""
             color = (0, 255, 255) if i == sel else (200, 200, 200)
             prefix = "> " if i == sel else "  "
-            cv2.putText(img, f"{prefix}{name}{tag}", (10, 90 + i * 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.52, color, 1, cv2.LINE_AA)
+            cv2.putText(
+                img,
+                f"{prefix}{name}{tag}",
+                (10, 90 + i * 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.52,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
 
         cv2.imshow("PNGirl", img)
         key = cv2.waitKey(0) & 0xFF
 
-        if key == ord('w'):
+        if key == ord("w"):
             sel = (sel - 1) % len(available)
-        elif key == ord('s'):
+        elif key == ord("s"):
             sel = (sel + 1) % len(available)
         elif key == 13:
             cv2.destroyAllWindows()
             return available[sel][0]
-        elif key == ord('q'):
+        elif key == ord("q"):
             cv2.destroyAllWindows()
             return None
 
+
 # --- Head pose ---
+
 
 def get_head_pose(face_results, w, h):
     global smoothed_angles
@@ -123,39 +154,41 @@ def get_head_pose(face_results, w, h):
     matrix = np.array(face_results.facial_transformation_matrixes[0])
     R = matrix[:3, :3]
 
-    pitch = math.degrees(math.atan2(-R[2, 0], math.sqrt(R[2, 1]**2 + R[2, 2]**2)))
-    yaw   = math.degrees(math.atan2(R[1, 0], R[0, 0]))
-    roll  = math.degrees(math.atan2(R[2, 1], R[2, 2]))
+    yaw = math.degrees(math.atan2(R[0, 2], R[2, 2]))
+    pitch = math.degrees(math.atan2(-R[1, 2], np.sqrt(R[0, 2] ** 2 + R[2, 2] ** 2)))
+    roll = math.degrees(math.atan2(R[1, 0], R[1, 1]))
 
     pitch = -pitch
-    roll  = -roll
+    roll = -roll
 
     if smoothed_angles is None:
         smoothed_angles = (roll, pitch, yaw)
     else:
         sr, sp, sy = smoothed_angles
         smoothed_angles = (
-            sr + SMOOTH * (roll  - sr),
+            sr + SMOOTH * (roll - sr),
             sp + SMOOTH * (pitch - sp),
-            sy + SMOOTH * (yaw   - sy),
+            sy + SMOOTH * (yaw - sy),
         )
 
     return smoothed_angles
 
+
 # --- Anchor + render ---
 
+
 def get_head_anchor(landmarks, w, h, offset_mult, x_nudge, y_nudge, roll_deg):
-    nose      = landmarks[0]
-    left_ear  = landmarks[7]
+    nose = landmarks[0]
+    left_ear = landmarks[7]
     right_ear = landmarks[8]
 
-    nose_y      = int(nose.y * h)
-    left_ear_x  = int(left_ear.x * w)
-    left_ear_y  = int(left_ear.y * h)
+    nose_y = int(nose.y * h)
+    left_ear_x = int(left_ear.x * w)
+    left_ear_y = int(left_ear.y * h)
     right_ear_x = int(right_ear.x * w)
     right_ear_y = int(right_ear.y * h)
-    ear_mid_x   = (left_ear_x + right_ear_x) // 2
-    ear_mid_y   = (left_ear_y + right_ear_y) // 2
+    ear_mid_x = (left_ear_x + right_ear_x) // 2
+    ear_mid_y = (left_ear_y + right_ear_y) // 2
 
     head_height = abs(nose_y - ear_mid_y)
     offset_dist = int(head_height * offset_mult) - y_nudge
@@ -169,44 +202,62 @@ def get_head_anchor(landmarks, w, h, offset_mult, x_nudge, y_nudge, roll_deg):
 
     return ax, ay, ear_width
 
+
 def rotate_png(img, roll, pitch, yaw):
     h, w = img.shape[:2]
     cx, cy = w // 2, h // 2
 
     # Roll: 2D rotation
     M = cv2.getRotationMatrix2D((cx, cy), -roll, 1.0)
-    rotated = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR,
-                             borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+    rotated = cv2.warpAffine(
+        img,
+        M,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0),
+    )
 
     # Pitch: vertical perspective warp
     pitch_factor = np.clip(pitch / 90.0, -0.6, 0.6)
     src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
     shift = pitch_factor * (h * 0.3)
-    dst = np.float32([
-        [w * 0.1,  shift],
-        [w * 0.9,  shift],
-        [w * 0.9,  h - shift],
-        [w * 0.1,  h - shift],
-    ])
+    dst = np.float32(
+        [
+            [w * 0.1, shift],
+            [w * 0.9, shift],
+            [w * 0.9, h - shift],
+            [w * 0.1, h - shift],
+        ]
+    )
     M_persp = cv2.getPerspectiveTransform(src, dst)
-    rotated = cv2.warpPerspective(rotated, M_persp, (w, h),
-                                  borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+    rotated = cv2.warpPerspective(
+        rotated,
+        M_persp,
+        (w, h),
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0),
+    )
 
     # Yaw: horizontal perspective warp
     yaw_factor = np.clip(yaw / 90.0, -0.6, 0.6)
     src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
     shift_y = yaw_factor * (w * 0.3)
-    dst = np.float32([
-        [shift_y,     h * 0.1],
-        [w - shift_y, h * 0.1],
-        [w - shift_y, h * 0.9],
-        [shift_y,     h * 0.9],
-    ])
+    dst = np.float32(
+        [
+            [shift_y, h * 0.1],
+            [w - shift_y, h * 0.1],
+            [w - shift_y, h * 0.9],
+            [shift_y, h * 0.9],
+        ]
+    )
     M_yaw = cv2.getPerspectiveTransform(src, dst)
-    rotated = cv2.warpPerspective(rotated, M_yaw, (w, h),
-                                  borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+    rotated = cv2.warpPerspective(
+        rotated, M_yaw, (w, h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0)
+    )
 
     return rotated
+
 
 def scale_png(img, ear_width, scale_mult):
     ph, pw = img.shape[:2]
@@ -215,6 +266,7 @@ def scale_png(img, ear_width, scale_mult):
         return img
     target_h = int(ph * (target_w / pw))
     return cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
 
 def composite(frame, png, cx, cy):
     fh, fw = frame.shape[:2]
@@ -240,10 +292,11 @@ def composite(frame, png, cx, cy):
 
     png_crop = png[py1:py2, px1:px2]
     alpha = png_crop[:, :, 3:4] / 255.0
-    rgb   = png_crop[:, :, :3]
+    rgb = png_crop[:, :, :3]
 
     roi = frame[fy1:fy2, fx1:fx2]
     frame[fy1:fy2, fx1:fx2] = (rgb * alpha + roi * (1 - alpha)).astype(np.uint8)
+
 
 def draw_panel(frame, s, angles):
     overlay = frame.copy()
@@ -262,13 +315,30 @@ def draw_panel(frame, s, angles):
         color = (100, 255, 100) if i == 0 else (220, 220, 220)
         if i == 5:
             color = (100, 200, 255)
-        cv2.putText(frame, line, (10, 22 + i * 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, color, 1, cv2.LINE_AA)
+        cv2.putText(
+            frame,
+            line,
+            (10, 22 + i * 22),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.52,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
 
     if angles:
         roll, pitch, yaw = angles
-        cv2.putText(frame, f"roll:{roll:+.0f} pitch:{pitch:+.0f} yaw:{yaw:+.0f}",
-                    (10, 185), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1, cv2.LINE_AA)
+        cv2.putText(
+            frame,
+            f"roll:{roll:+.0f} pitch:{pitch:+.0f} yaw:{yaw:+.0f}",
+            (10, 185),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (160, 160, 160),
+            1,
+            cv2.LINE_AA,
+        )
+
 
 # --- Main ---
 
@@ -279,8 +349,11 @@ if cam_index is None:
 settings = load_settings(cam_index)
 cap = cv2.VideoCapture(cam_index)
 
-with PoseLandmarker.create_from_options(pose_options) as pose_landmarker, \
-     FaceLandmarker.create_from_options(face_options) as face_landmarker:
+with PoseLandmarker.create_from_options(
+    pose_options
+) as pose_landmarker, FaceLandmarker.create_from_options(
+    face_options
+) as face_landmarker:
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -310,20 +383,22 @@ with PoseLandmarker.create_from_options(pose_options) as pose_landmarker, \
                 cx, cy = int(lm.x * w), int(lm.y * h)
                 cv2.circle(frame, (cx, cy), 3, (0, 200, 0), -1)
 
-            roll  = angles[0] if angles else 0.0
+            roll = angles[0] if angles else 0.0
             pitch = angles[1] if angles else 0.0
-            yaw   = angles[2] if angles else 0.0
+            yaw = angles[2] if angles else 0.0
 
             ax, ay, ear_width = get_head_anchor(
-                landmarks, w, h,
+                landmarks,
+                w,
+                h,
                 settings["head_offset_mult"],
                 settings["head_x_nudge"],
                 settings["head_y_nudge"],
-                roll
+                roll,
             )
 
             rotated = rotate_png(overlay_img, roll, pitch, yaw)
-            scaled  = scale_png(rotated, ear_width, settings["head_scale_mult"])
+            scaled = scale_png(rotated, ear_width, settings["head_scale_mult"])
             composite(frame, scaled, ax, ay)
 
             cv2.circle(frame, (ax, ay), 6, (0, 0, 255), -1)
