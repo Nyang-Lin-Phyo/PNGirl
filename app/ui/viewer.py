@@ -1,31 +1,96 @@
 import cv2
+import numpy as np
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import Qt, QTimer, QPoint, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap, QCursor
 
 from app.ui.widgets import SliderRow, Accordion
+from app.ui.asset_panel import AssetPanel
+
+
+class VideoLabel(QLabel):
+    """
+    QLabel subclass that intercepts mouse events for drag-and-drop
+    from the asset panel into the frame.
+    """
+    mouse_drag_move    = pyqtSignal(int, int)   # frame-space cx, cy
+    mouse_drag_release = pyqtSignal(int, int)   # frame-space cx, cy
+
+    def __init__(self):
+        super().__init__()
+        self._dragging = False
+        self._frame_size = (1, 1)   # actual frame pixel dims, updated each frame
+        self.setMouseTracking(True)
+
+    def set_frame_size(self, w, h):
+        self._frame_size = (w, h)
+
+    def _label_to_frame(self, lx, ly):
+        """Convert label pixel coords to frame pixel coords."""
+        lw = self.width()
+        lh = self.height()
+        fw, fh = self._frame_size
+
+        # The frame is scaled with KeepAspectRatio centred in the label
+        scale = min(lw / fw, lh / fh)
+        disp_w = fw * scale
+        disp_h = fh * scale
+        off_x  = (lw - disp_w) / 2
+        off_y  = (lh - disp_h) / 2
+
+        fx = int((lx - off_x) / scale)
+        fy = int((ly - off_y) / scale)
+        return fx, fy
+
+    def start_drag(self):
+        self._dragging = True
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            fx, fy = self._label_to_frame(event.pos().x(), event.pos().y())
+            self.mouse_drag_move.emit(fx, fy)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._dragging and event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            fx, fy = self._label_to_frame(event.pos().x(), event.pos().y())
+            self.mouse_drag_release.emit(fx, fy)
+        super().mouseReleaseEvent(event)
 
 
 class ViewerPage(QWidget):
     def __init__(self, on_save, on_back):
         super().__init__()
-        self._on_save = on_save
-        self._on_back = on_back
+        self._on_save        = on_save
+        self._on_back        = on_back
+        self._drag_state     = None   # set by MainWindow after construction
+        self._anchor_pos     = {}     # latest anchor pixel positions from worker
+        self._grab_offset    = (0, 0) # where in thumbnail the user grabbed
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Left: video feed ─────────────────────────────────────────────
-        self.video_label = QLabel()
+        # ── Left: asset panel ────────────────────────────────────────────
+        self.asset_panel = AssetPanel()
+        self.asset_panel.drag_started.connect(self._on_asset_drag_started)
+        outer.addWidget(self.asset_panel)
+
+        # ── Centre: video feed ───────────────────────────────────────────
+        self.video_label = VideoLabel()
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setStyleSheet("background: #0a0a0a;")
         self.video_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.video_label.mouse_drag_move.connect(self._on_mouse_drag_move)
+        self.video_label.mouse_drag_release.connect(self._on_mouse_drag_release)
         outer.addWidget(self.video_label, stretch=1)
 
         # ── Right: panel ─────────────────────────────────────────────────
@@ -37,17 +102,13 @@ class ViewerPage(QWidget):
         pv.setContentsMargins(0, 0, 0, 0)
         pv.setSpacing(0)
 
-        # App name header
         header_widget = QWidget()
         header_widget.setStyleSheet("background: #111;")
         hl = QVBoxLayout(header_widget)
         hl.setContentsMargins(20, 20, 20, 14)
-        hl.setSpacing(4)
-
         name_lbl = QLabel("PNGirl")
         name_lbl.setStyleSheet("color: #e0e0e0; font-size: 15px; font-weight: 500;")
         hl.addWidget(name_lbl)
-
         pv.addWidget(header_widget)
 
         divider = QFrame()
@@ -57,7 +118,6 @@ class ViewerPage(QWidget):
         # ── Accordion ─────────────────────────────────────────────────────
         self.accordion = Accordion()
 
-        # Head sliders
         self.sl_offset = SliderRow("Offset",  0.1, 3.0,  0.05, 0.9,  lambda v: f"{v:.2f}")
         self.sl_xnudge = SliderRow("X nudge", -200, 200, 5,    0,    lambda v: f"{int(v)}px")
         self.sl_ynudge = SliderRow("Y nudge", -200, 200, 5,    110,  lambda v: f"{int(v)}px")
@@ -66,7 +126,6 @@ class ViewerPage(QWidget):
             self.sl_offset, self.sl_xnudge, self.sl_ynudge, self.sl_scale
         ])
 
-        # Left shoulder sliders
         self.sl_l_ynudge = SliderRow("Y nudge", -200, 200, 5,   60,  lambda v: f"{int(v)}px")
         self.sl_l_xnudge = SliderRow("X nudge", -200, 200, 5,   0,   lambda v: f"{int(v)}px")
         self.sl_l_scale  = SliderRow("Scale",   0.1, 4.0,  0.05, 1.0, lambda v: f"{v:.2f}")
@@ -74,7 +133,6 @@ class ViewerPage(QWidget):
             self.sl_l_ynudge, self.sl_l_xnudge, self.sl_l_scale
         ])
 
-        # Right shoulder sliders
         self.sl_r_ynudge = SliderRow("Y nudge", -200, 200, 5,   60,  lambda v: f"{int(v)}px")
         self.sl_r_xnudge = SliderRow("X nudge", -200, 200, 5,   0,   lambda v: f"{int(v)}px")
         self.sl_r_scale  = SliderRow("Scale",   0.1, 4.0,  0.05, 1.0, lambda v: f"{v:.2f}")
@@ -82,10 +140,12 @@ class ViewerPage(QWidget):
             self.sl_r_ynudge, self.sl_r_xnudge, self.sl_r_scale
         ])
 
+        self.sl_snap = SliderRow("Snap radius", 20, 300, 5, 80, lambda v: f"{int(v)}px")
+        self.accordion.add_section("SNAPPING", [self.sl_snap])
+
         pv.addWidget(self.accordion)
         pv.addStretch()
 
-        # Angles readout
         self.angles_lbl = QLabel("r—   p—   y—")
         self.angles_lbl.setContentsMargins(20, 0, 20, 0)
         self.angles_lbl.setStyleSheet(
@@ -94,30 +154,32 @@ class ViewerPage(QWidget):
         pv.addWidget(self.angles_lbl)
         pv.addSpacing(10)
 
-        # ── Footer ────────────────────────────────────────────────────────
         footer = QWidget()
         footer.setStyleSheet("background: #111; border-top: 1px solid #1e1e1e;")
         foot_row = QHBoxLayout(footer)
         foot_row.setContentsMargins(16, 10, 16, 10)
         foot_row.setSpacing(8)
-
         self.btn_back = QPushButton("Back")
         self.btn_save = QPushButton("Save")
         self.btn_save.setObjectName("primary")
         self.btn_back.clicked.connect(self._on_back)
         self.btn_save.clicked.connect(self._handle_save)
-
         foot_row.addWidget(self.btn_back)
         foot_row.addWidget(self.btn_save)
         pv.addWidget(footer)
 
         outer.addWidget(panel)
 
-        # Wire all sliders → live update
         for sl in self._all_sliders():
             sl.slider.valueChanged.connect(self._slider_changed)
 
     # ── Public API ────────────────────────────────────────────────────────
+
+    def set_drag_state(self, drag_state):
+        self._drag_state = drag_state
+
+    def update_anchor_positions(self, positions: dict):
+        self._anchor_pos = positions
 
     def update_frame(self, frame, angles):
         if angles:
@@ -125,6 +187,7 @@ class ViewerPage(QWidget):
             self.angles_lbl.setText(f"r{r:+.0f}   p{p:+.0f}   y{y:+.0f}")
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
+        self.video_label.set_frame_size(w, h)
         qimg = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
         pix  = QPixmap.fromImage(qimg)
         pix  = pix.scaled(self.video_label.size(),
@@ -143,6 +206,7 @@ class ViewerPage(QWidget):
         self.sl_r_ynudge.set_value(s["right_shoulder_y_nudge"])
         self.sl_r_xnudge.set_value(s["right_shoulder_x_nudge"])
         self.sl_r_scale.set_value(s["right_shoulder_scale_mult"])
+        self.sl_snap.set_value(s.get("snap_threshold", 80))
 
     def read_settings(self):
         return {
@@ -156,7 +220,33 @@ class ViewerPage(QWidget):
             "right_shoulder_y_nudge":    int(self.sl_r_ynudge.value()),
             "right_shoulder_x_nudge":    int(self.sl_r_xnudge.value()),
             "right_shoulder_scale_mult": self.sl_r_scale.value(),
+            "snap_threshold":            int(self.sl_snap.value()),
         }
+
+    # ── Asset panel drag ──────────────────────────────────────────────────
+
+    def _on_asset_drag_started(self, png_path: str, grab_x: int, grab_y: int):
+        if self._drag_state is None:
+            return
+        self._grab_offset = (grab_x, grab_y)
+        # Start drag at the video label centre as a placeholder;
+        # the first mouse_drag_move will update it immediately
+        cx = self.video_label.width() // 2
+        cy = self.video_label.height() // 2
+        self._drag_state.start_mouse_drag(png_path, cx, cy)
+        self.video_label.start_drag()
+
+    def _on_mouse_drag_move(self, fx: int, fy: int):
+        if self._drag_state is None:
+            return
+        self._drag_state.move_mouse_drag(fx, fy)
+
+    def _on_mouse_drag_release(self, fx: int, fy: int):
+        if self._drag_state is None:
+            return
+        snap_threshold = int(self.sl_snap.value())
+        self._drag_state.move_mouse_drag(fx, fy)
+        self._drag_state.release_mouse_drag(self._anchor_pos, snap_threshold)
 
     # ── Internals ─────────────────────────────────────────────────────────
 
@@ -165,6 +255,7 @@ class ViewerPage(QWidget):
             self.sl_offset, self.sl_xnudge, self.sl_ynudge, self.sl_scale,
             self.sl_l_ynudge, self.sl_l_xnudge, self.sl_l_scale,
             self.sl_r_ynudge, self.sl_r_xnudge, self.sl_r_scale,
+            self.sl_snap,
         )
 
     def _slider_changed(self, _):
