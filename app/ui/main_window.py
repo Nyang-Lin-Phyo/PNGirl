@@ -5,8 +5,10 @@ from app.worker import CameraWorker
 from app.drag_state import DragState
 from app.ui.picker import CameraPickerPage
 from app.ui.viewer import ViewerPage
+import time
 
 PINCH_PICKUP_RADIUS = 60
+PINCH_HOLD_TIME = 0.3
 
 
 class MainWindow(QMainWindow):
@@ -38,6 +40,9 @@ class MainWindow(QMainWindow):
         )
         self.viewer.set_drag_state(self.drag_state)
         self.stack.addWidget(self.viewer)
+
+        self._pinch_start_times = {}
+        self._pinch_activated = {}
 
     # ── Camera lifecycle ──────────────────────────────────────────────────
 
@@ -131,30 +136,60 @@ class MainWindow(QMainWindow):
 
             # ── Pinch start ───────────────────────────────────────────────
             if pinching and not was_pinching:
-
-                # 1. Check if pinching over the asset panel
-                png_path = self._pinch_over_asset_panel(px, py)
-                if png_path:
-                    self.drag_state.start_hand_drag(hand_id, png_path, px, py)
-
-                else:
-                    # 2. Check if pinching near a snapped anchor
-                    for key, (ax, ay) in self._anchor_pos.items():
-                        dist = ((px - ax)**2 + (py - ay)**2) ** 0.5
-                        if dist < PINCH_PICKUP_RADIUS and slots.get(key):
-                            self.drag_state.clear_anchor(key)
-                            self.drag_state.start_hand_drag(
-                                hand_id, slots[key], px, py)
-                            break
+                self._pinch_start_times[hand_id] = time.time()
+                self._pinch_activated[hand_id] = False
 
             # ── Pinch held ────────────────────────────────────────────────
             elif pinching and was_pinching:
-                self.drag_state.move_hand_drag(hand_id, px, py)
+
+                # Not activated yet -> wait for hold duration
+                if not self._pinch_activated.get(hand_id, False):
+
+                    start = self._pinch_start_times.get(hand_id, time.time())
+
+                    if time.time() - start >= PINCH_HOLD_TIME:
+
+                        self._pinch_activated[hand_id] = True
+
+                        png_path = self._pinch_over_asset_panel(px, py)
+
+                        if png_path:
+                            self.drag_state.start_hand_drag(
+                                hand_id,
+                                png_path,
+                                px,
+                                py
+                            )
+
+                        else:
+                            for key, (ax, ay) in self._anchor_pos.items():
+                                dist = ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5
+
+                                if dist < PINCH_PICKUP_RADIUS and slots.get(key):
+                                    self.drag_state.clear_anchor(key)
+
+                                    self.drag_state.start_hand_drag(
+                                        hand_id,
+                                        slots[key],
+                                        px,
+                                        py
+                                    )
+                                    break
+
+                else:
+                    self.drag_state.move_hand_drag(hand_id, px, py)
 
             # ── Pinch release ─────────────────────────────────────────────
             elif not pinching and was_pinching:
+
+                self._pinch_start_times.pop(hand_id, None)
+                self._pinch_activated.pop(hand_id, None)
+
                 self.drag_state.release_hand_drag(
-                    hand_id, self._anchor_pos, snap_threshold)
+                    hand_id,
+                    self._anchor_pos,
+                    snap_threshold
+                )
 
             self._prev_pinching[hand_id] = pinching
 
@@ -166,6 +201,8 @@ class MainWindow(QMainWindow):
                     self.drag_state.release_hand_drag(
                         hand_id, self._anchor_pos, snap_threshold)
                 self._prev_pinching.pop(hand_id, None)
+                self._pinch_start_times.pop(hand_id, None)
+                self._pinch_activated.pop(hand_id, None)
 
     # ── Settings bridge ───────────────────────────────────────────────────
 

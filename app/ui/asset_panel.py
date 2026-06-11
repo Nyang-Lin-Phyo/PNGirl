@@ -5,23 +5,20 @@ Emits drag_started(png_path, grab_offset_x, grab_offset_y) when a drag begins.
 """
 
 import os
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QScrollArea,
-    QGridLayout, QFrame, QSizePolicy
-)
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
-from PyQt6.QtGui import QPixmap, QDrag, QCursor
-from PyQt6.QtCore import QMimeData
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import QPushButton, QHBoxLayout
 
-ASSETS_DIR   = "assets"
-THUMB_SIZE   = 80
-THUMB_PAD    = 8
+ASSETS_DIR = "assets"
+THUMB_SIZE = 80
+THUMB_PAD = 8
 
 
 class ThumbnailWidget(QWidget):
     """Single PNG thumbnail — handles press + drag-start."""
 
-    drag_started = pyqtSignal(str, int, int)   # path, grab_offset_x, grab_offset_y
+    drag_started = pyqtSignal(str, int, int)  # path, grab_offset_x, grab_offset_y
 
     def __init__(self, png_path: str):
         super().__init__()
@@ -46,9 +43,12 @@ class ThumbnailWidget(QWidget):
 
         pix = QPixmap(png_path)
         if not pix.isNull():
-            pix = pix.scaled(THUMB_SIZE, THUMB_SIZE,
-                             Qt.AspectRatioMode.KeepAspectRatio,
-                             Qt.TransformationMode.SmoothTransformation)
+            pix = pix.scaled(
+                THUMB_SIZE,
+                THUMB_SIZE,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         self.img_label.setPixmap(pix)
         layout.addWidget(self.img_label)
 
@@ -78,8 +78,10 @@ class ThumbnailWidget(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if (self._drag_start is not None and
-                (event.pos() - self._drag_start).manhattanLength() > 8):
+        if (
+            self._drag_start is not None
+            and (event.pos() - self._drag_start).manhattanLength() > 8
+        ):
             # Compute where in the thumbnail they grabbed
             # pos() is relative to this widget; img_label starts at THUMB_PAD, THUMB_PAD
             grab_x = event.pos().x() - THUMB_PAD
@@ -96,80 +98,95 @@ class ThumbnailWidget(QWidget):
 
 
 class AssetPanel(QWidget):
-    """
-    Floating left sidebar that overlays the video feed.
-    drag_started(png_path, grab_offset_x, grab_offset_y) fires when a drag begins.
-    """
 
     drag_started = pyqtSignal(str, int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setStyleSheet("background: transparent;")
+
+        self._paths = []
+        self._index = 0
+        self._thumbnails = []
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        root.setContentsMargins(8, 8, 8, 8)
 
-        # Header
-        header = QLabel("ASSETS")
-        header.setContentsMargins(14, 12, 14, 10)
-        header.setStyleSheet(
-            "background: rgba(10,10,10,200);"
-            "color: #3a3a3a; font-size: 10px; letter-spacing: 1px;"
-            "border-bottom: 1px solid rgba(40,40,40,180);")
-        root.addWidget(header)
-
-        # Scroll area with translucent background
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
-            QScrollArea {
-                background: rgba(10,10,10,180);
-                border: none;
-            }
-            QWidget#scroll_inner {
-                background: transparent;
-            }
+        self.setStyleSheet("""
+            background: rgba(10,10,10,180);
+            border-radius: 12px;
         """)
 
-        self._grid_widget = QWidget()
-        self._grid_widget.setObjectName("scroll_inner")
-        self._grid_widget.setStyleSheet("background: transparent;")
-        self._grid = QGridLayout(self._grid_widget)
-        self._grid.setContentsMargins(8, 8, 8, 8)
-        self._grid.setSpacing(4)
+        title = QLabel("ASSETS")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        root.addWidget(title)
 
-        scroll.setWidget(self._grid_widget)
-        root.addWidget(scroll)
+        row = QHBoxLayout()
 
-        self._thumbnails: list[ThumbnailWidget] = []
+        self.prev_btn = QPushButton("◀")
+        self.next_btn = QPushButton("▶")
+
+        self.prev_btn.clicked.connect(self._prev)
+        self.next_btn.clicked.connect(self._next)
+
+        row.addWidget(self.prev_btn)
+
+        self.thumb_container = QVBoxLayout()
+        row.addLayout(self.thumb_container)
+
+        row.addWidget(self.next_btn)
+
+        root.addLayout(row)
+
         self.refresh()
 
-    def refresh(self):
-        """Scan assets/ and rebuild the thumbnail grid."""
-        # Clear existing
-        for thumb in self._thumbnails:
-            thumb.setParent(None)
+    def _prev(self):
+        if not self._paths:
+            return
+
+        self._index = (self._index - 1) % len(self._paths)
+        self._show_current()
+
+    def _next(self):
+        if not self._paths:
+            return
+
+        self._index = (self._index + 1) % len(self._paths)
+        self._show_current()
+
+    def _show_current(self):
+        while self.thumb_container.count():
+            item = self.thumb_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
         self._thumbnails.clear()
+
+        if not self._paths:
+            return
+
+        thumb = ThumbnailWidget(self._paths[self._index])
+        thumb.drag_started.connect(self.drag_started)
+        self._thumbnails.append(thumb)
+        self.thumb_container.addStretch()
+        self.thumb_container.addWidget(thumb)
+        self.thumb_container.addStretch()
+
+    def refresh(self):
+        self._paths = []
 
         if not os.path.isdir(ASSETS_DIR):
             return
 
-        paths = sorted([
-            os.path.join(ASSETS_DIR, f)
-            for f in os.listdir(ASSETS_DIR)
-            if f.lower().endswith(".png")
-        ])
+        self._paths = sorted(
+            [
+                os.path.join(ASSETS_DIR, f)
+                for f in os.listdir(ASSETS_DIR)
+                if f.lower().endswith(".png")
+            ]
+        )
 
-        cols = 2
-        for i, path in enumerate(paths):
-            thumb = ThumbnailWidget(path)
-            thumb.drag_started.connect(self.drag_started)
-            self._thumbnails.append(thumb)
-            self._grid.addWidget(thumb, i // cols, i % cols)
+        self._index = 0
 
-        # Push items to top
-        self._grid.setRowStretch(len(paths) // cols + 1, 1)
+        self._show_current()

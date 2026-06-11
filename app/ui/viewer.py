@@ -12,6 +12,7 @@ from app.ui.widgets import SliderRow, Accordion
 from app.ui.asset_panel import AssetPanel
 
 ASSET_PANEL_W = 180
+ASSET_PANEL_H = 220
 
 
 class VideoLabel(QLabel):
@@ -171,7 +172,17 @@ class ViewerPage(QWidget):
         x = vl.x()
         y = vl.y()
         h = vl.height()
-        self.asset_panel.setGeometry(QRect(x, y, ASSET_PANEL_W, h))
+        panel_x = x + 20
+        panel_y = y + (h - ASSET_PANEL_H) // 2
+
+        self.asset_panel.setGeometry(
+            QRect(
+                panel_x,
+                panel_y,
+                ASSET_PANEL_W,
+                ASSET_PANEL_H
+            )
+        )
 
     # ── Public API ────────────────────────────────────────────────────────
 
