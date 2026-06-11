@@ -97,16 +97,16 @@ class ThumbnailWidget(QWidget):
 
 class AssetPanel(QWidget):
     """
-    Left sidebar.
+    Floating left sidebar that overlays the video feed.
     drag_started(png_path, grab_offset_x, grab_offset_y) fires when a drag begins.
     """
 
     drag_started = pyqtSignal(str, int, int)
 
-    def __init__(self):
-        super().__init__()
-        self.setFixedWidth(200)
-        self.setStyleSheet("background: #0e0e0e; border-right: 1px solid #1e1e1e;")
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -114,19 +114,29 @@ class AssetPanel(QWidget):
 
         # Header
         header = QLabel("ASSETS")
-        header.setContentsMargins(16, 14, 16, 10)
+        header.setContentsMargins(14, 12, 14, 10)
         header.setStyleSheet(
+            "background: rgba(10,10,10,200);"
             "color: #3a3a3a; font-size: 10px; letter-spacing: 1px;"
-            "border-bottom: 1px solid #1e1e1e;")
+            "border-bottom: 1px solid rgba(40,40,40,180);")
         root.addWidget(header)
 
-        # Scroll area
+        # Scroll area with translucent background
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none; background: transparent;")
+        scroll.setStyleSheet("""
+            QScrollArea {
+                background: rgba(10,10,10,180);
+                border: none;
+            }
+            QWidget#scroll_inner {
+                background: transparent;
+            }
+        """)
 
         self._grid_widget = QWidget()
+        self._grid_widget.setObjectName("scroll_inner")
         self._grid_widget.setStyleSheet("background: transparent;")
         self._grid = QGridLayout(self._grid_widget)
         self._grid.setContentsMargins(8, 8, 8, 8)
